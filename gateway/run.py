@@ -16989,9 +16989,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return self._is_user_authorized(source)
         return check
 
+    def is_user_authorized(self, source: SessionSource) -> bool:
+        """Public, transport-profile-safe authorization wrapper for plugins.
 
-
-
+        ``pre_gateway_dispatch`` hooks run before normal gateway authorization.
+        Plugins that make an early trust decision can use this wrapper without
+        accidentally authorizing against a routed multiplex profile instead of
+        the profile that owns the inbound transport.
+        """
+        return self._is_user_authorized_for_source(source)
 
 
     async def _deliver_platform_notice(self, source, content: str) -> None:
