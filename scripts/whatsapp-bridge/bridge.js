@@ -9,6 +9,7 @@
  *   GET  /messages       - Long-poll for new incoming messages
  *   POST /send           - Send a message { chatId, message, replyTo? }
  *   POST /edit           - Edit a sent message { chatId, messageId, message }
+ *   POST /react          - React to a message { chatId, messageId, emoji, participant? }
  *   POST /send-media     - Send media natively { chatId, filePath, mediaType?, caption?, fileName? }
  *   POST /send-location  - Send location pin { chatId, latitude, longitude, name?, address? }
  *   POST /typing         - Send typing indicator { chatId }
