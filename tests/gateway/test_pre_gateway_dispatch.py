@@ -60,6 +60,18 @@ def _make_runner(platform: Platform):
     return runner, adapter
 
 
+def test_public_auth_wrapper_uses_transport_profile_safe_boundary():
+    """Plugin auth never bypasses multiplex transport-profile resolution."""
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    runner._is_user_authorized_for_source = MagicMock(return_value=True)
+    source = _make_event().source
+
+    assert runner.is_user_authorized(source) is True
+    runner._is_user_authorized_for_source.assert_called_once_with(source)
+
+
 @pytest.mark.asyncio
 async def test_internal_events_bypass_hook(monkeypatch):
     """Internal events (event.internal=True) skip the plugin hook entirely."""
