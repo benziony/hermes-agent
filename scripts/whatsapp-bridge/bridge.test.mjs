@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createBoundedMessageStore } from './bridge_helpers.js';
+import { createBoundedMessageStore, resolveReactionTarget } from './bridge_helpers.js';
 
 const chatId = '5215550000013@s.whatsapp.net';
 const groupId = '120363000000000000@g.us';
@@ -55,4 +55,46 @@ test('LRU eviction drops the oldest message once over capacity', () => {
   assert.equal(store.get('a'), null); // evicted
   assert.ok(store.get('b'));
   assert.ok(store.get('c'));
+});
+
+test('reaction lookup rejects a cached message from another chat', () => {
+  const store = createBoundedMessageStore(8);
+  store.remember(textMessage('same-id', chatId));
+  const result = resolveReactionTarget({
+    messageStore: store,
+    chatId: groupId,
+    messageId: 'same-id',
+    participant: '5215550000023@s.whatsapp.net',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+});
+
+test('durable group target survives cache eviction with participant intact', () => {
+  const store = createBoundedMessageStore(1);
+  store.remember(textMessage('old', groupId, { participant: '5215550000023@s.whatsapp.net' }));
+  store.remember(textMessage('new', groupId, { participant: '5215550000024@s.whatsapp.net' }));
+  const result = resolveReactionTarget({
+    messageStore: store,
+    chatId: groupId,
+    messageId: 'old',
+    participant: '5215550000023@s.whatsapp.net',
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.key, {
+    id: 'old',
+    remoteJid: groupId,
+    fromMe: false,
+    participant: '5215550000023@s.whatsapp.net',
+  });
+});
+
+test('uncached group target fails closed without a participant', () => {
+  const result = resolveReactionTarget({
+    messageStore: createBoundedMessageStore(8),
+    chatId: groupId,
+    messageId: 'missing',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 404);
 });

@@ -46,6 +46,7 @@ import {
   mediaPayloadForFile,
   pollCreationMessageFromPayload,
   pollUpdateForAggregation,
+  resolveReactionTarget,
 } from './bridge_helpers.js';
 
 // Parse CLI args
@@ -898,12 +899,12 @@ app.post('/react', async (req, res) => {
   if (!sock || connectionState !== 'connected') {
     return res.status(503).json({ error: 'Not connected to WhatsApp' });
   }
-  const { chatId, messageId, emoji } = req.body;
+  const { chatId, messageId, emoji, participant } = req.body;
   if (!chatId || !messageId || emoji === undefined) {
     return res.status(400).json({ error: 'chatId, messageId, and emoji are required' });
   }
-  const target = messageStore.get(messageId);
-  if (!target) return res.status(404).json({ error: 'Referenced message not found in bridge cache' });
+  const target = resolveReactionTarget({ messageStore, chatId, messageId, participant });
+  if (!target.ok) return res.status(target.status).json({ error: target.error });
   try {
     const sent = await sock.sendMessage(chatId, { react: { text: emoji, key: target.key } });
     trackSentMessageId(sent);

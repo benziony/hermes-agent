@@ -65,6 +65,39 @@ export function createBoundedMessageStore(limit = 512) {
   return { remember, get };
 }
 
+export function resolveReactionTarget({ messageStore, chatId, messageId, participant = null }) {
+  const normalizedChat = normalizeWhatsAppId(chatId);
+  const normalizedParticipant = normalizeWhatsAppId(participant);
+  if (!normalizedChat || !messageId) {
+    return { ok: false, status: 400, error: 'chatId and messageId are required' };
+  }
+
+  const cached = messageStore?.get(messageId) || null;
+  if (cached) {
+    const cachedChat = normalizeWhatsAppId(cached.key?.remoteJid);
+    if (!cachedChat || cachedChat !== normalizedChat) {
+      return { ok: false, status: 409, error: 'Referenced message belongs to another chat' };
+    }
+    return { ok: true, key: cached.key };
+  }
+
+  // The Codex broker retains the exact inbound chat/message/participant tuple
+  // until its delayed receipt is delivered. That durable tuple is a safe
+  // fallback after a bridge restart or bounded-cache eviction.
+  if (normalizedChat.endsWith('@g.us') && !normalizedParticipant) {
+    return { ok: false, status: 404, error: 'Group reaction target is missing its participant' };
+  }
+  return {
+    ok: true,
+    key: {
+      id: String(messageId),
+      remoteJid: normalizedChat,
+      fromMe: false,
+      ...(normalizedParticipant ? { participant: normalizedParticipant } : {}),
+    },
+  };
+}
+
 export function pollCreationMessageSecret(pollCreation) {
   return pollCreation?.message?.messageContextInfo?.messageSecret
     || pollCreation?.messageContextInfo?.messageSecret
