@@ -16707,14 +16707,42 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         return _handler
 
     @staticmethod
-    def _exclusive_inbound_claim(adapter: BasePlatformAdapter) -> Optional[dict]:
-        """Validate and return one adapter-scoped exclusive inbound claim."""
+    def _exclusive_inbound_claims(adapter: BasePlatformAdapter) -> tuple[dict, ...]:
+        """Validate and return adapter-scoped exclusive inbound claims.
+
+        A mapping remains the backwards-compatible single-claim form. A bounded
+        list allows one transport to reserve multiple exact chats without
+        weakening the per-chat sender and handler checks.
+        """
         extra = getattr(getattr(adapter, "config", None), "extra", None) or {}
         raw = extra.get("exclusive_inbound")
         if raw is None:
-            return None
-        if not isinstance(raw, dict):
-            raise ValueError("platform extra.exclusive_inbound must be a mapping")
+            return ()
+        raw_claims = [raw] if isinstance(raw, dict) else raw
+        if (
+            not isinstance(raw_claims, list)
+            or not raw_claims
+            or len(raw_claims) > 16
+            or any(not isinstance(item, dict) for item in raw_claims)
+        ):
+            raise ValueError(
+                "platform extra.exclusive_inbound must be a mapping or a "
+                "non-empty list of at most 16 mappings"
+            )
+
+        claims = []
+        seen_chat_ids = set()
+        for item in raw_claims:
+            claim = GatewayRunner._validate_exclusive_inbound_claim(item)
+            if claim["chat_id"] in seen_chat_ids:
+                raise ValueError("exclusive_inbound chat IDs must be unique")
+            seen_chat_ids.add(claim["chat_id"])
+            claims.append(claim)
+        return tuple(claims)
+
+    @staticmethod
+    def _validate_exclusive_inbound_claim(raw: dict) -> dict:
+        """Validate one exact-chat claim."""
         chat_id = raw.get("chat_id")
         handler = raw.get("handler")
         if not isinstance(chat_id, str) or not chat_id.strip():
@@ -16787,16 +16815,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         profile_name: Optional[str] = None,
     ) -> None:
         """Install one exact-chat, runner-owned exclusive admission boundary."""
-        claim = self._exclusive_inbound_claim(adapter)
+        claims = self._exclusive_inbound_claims(adapter)
         setter = getattr(adapter, "set_exclusive_inbound_handler", None)
         if not callable(setter):
-            if claim is not None:
+            if claims:
                 raise TypeError(
                     "adapter with exclusive_inbound config does not support "
                     "per-message admission"
                 )
             return
-        if claim is None:
+        if not claims:
             setter(None)
             return
 
@@ -16815,7 +16843,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         async def _handler(event: MessageEvent) -> bool:
             source = event.source
-            if str(getattr(source, "chat_id", "")) != claim["chat_id"]:
+            chat_id = str(getattr(source, "chat_id", ""))
+            claim = next(
+                (candidate for candidate in claims if candidate["chat_id"] == chat_id),
+                None,
+            )
+            if claim is None:
                 return False
 
             # A matched claim is always consumed. Missing plugins, collisions,

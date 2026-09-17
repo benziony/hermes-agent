@@ -55,6 +55,14 @@ def _sender_claim():
     }
 
 
+def _second_claim():
+    return {
+        "chat_id": "council@g.us",
+        "handler": "codex_bridge",
+        "allowed_senders": ["15551234567"],
+    }
+
+
 @pytest.mark.asyncio
 async def test_unrelated_chat_falls_through_without_auth_or_plugin(monkeypatch):
     runner = _runner()
@@ -90,6 +98,45 @@ async def test_exact_chat_awaits_one_registered_durable_admission(monkeypatch):
     assert admitted == ["m1"]
     assert event.source._authorization_profile_home is not None
     adapter.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_multiple_exact_chat_claims_dispatch_independently(monkeypatch):
+    runner = _runner()
+    adapter = _Adapter([_sender_claim(), _second_claim()])
+    manager = PluginManager()
+    context = PluginContext(PluginManifest(name="bridge"), manager)
+    admitted = []
+
+    async def accept(event):
+        admitted.append((event.source.chat_id, event.message_id))
+        return True
+
+    context.register_exclusive_inbound_handler("codex_bridge", accept)
+    monkeypatch.setattr("hermes_cli.plugins.get_plugin_manager", lambda: manager)
+    runner._configure_exclusive_inbound(adapter)
+
+    assert await adapter.exclusive_handler(_event(chat_id="codex@g.us")) is True
+    assert await adapter.exclusive_handler(
+        _event(chat_id="council@g.us", message_id="m2")
+    ) is True
+    assert await adapter.exclusive_handler(_event(chat_id="other@g.us")) is False
+    assert admitted == [("codex@g.us", "m1"), ("council@g.us", "m2")]
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        [],
+        [_claim(), _claim()],
+        [_claim()] * 17,
+    ],
+)
+def test_multiple_claims_reject_empty_duplicate_or_unbounded_lists(claims):
+    runner = _runner()
+    adapter = _Adapter(claims)
+    with pytest.raises(ValueError):
+        runner._configure_exclusive_inbound(adapter)
 
 
 @pytest.mark.asyncio
